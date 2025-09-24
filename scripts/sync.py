@@ -12,7 +12,8 @@ BEARER = os.environ["SMARTLEAD_BEARER"]
 TIMEOUT = int(os.environ.get("SMARTLEAD_TIMEOUT", "60"))
 TABLE_NAME = "public.all_accounts_realtime"
 
-pool = ConnectionPool(SUPABASE_DB_URL, min_size=1, max_size=4, timeout=10)
+# pool = ConnectionPool(SUPABASE_DB_URL, min_size=1, max_size=4, timeout=10)
+pool = ConnectionPool(SUPABASE_DB_URL, min_size=1, max_size=4, timeout=10, kwargs={"prepare_threshold": 0})
 
 INIT_SQL = """
 create table if not exists public.sync_runs (
