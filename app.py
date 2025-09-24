@@ -28,7 +28,12 @@ def get_pool():
         min_size=1,
         max_size=4,
         timeout=10,
-        kwargs={"prepare_threshold": 0}
+        kwargs={
+            "autocommit": True,
+            "row_factory": dict_row,
+            "prepare_threshold": 0,
+            "simple_query_protocol": True,
+        }
     )
 
 pool = get_pool()
