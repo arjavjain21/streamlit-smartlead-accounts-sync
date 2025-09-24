@@ -6,6 +6,8 @@ import httpx
 import pandas as pd
 import streamlit as st
 from psycopg_pool import ConnectionPool
+from psycopg.rows import dict_row
+
 
 DEFAULT_ENDPOINT = os.environ.get(
     "SMARTLEAD_ENDPOINT",
