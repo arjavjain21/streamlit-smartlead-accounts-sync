@@ -13,7 +13,18 @@ TIMEOUT = int(os.environ.get("SMARTLEAD_TIMEOUT", "60"))
 TABLE_NAME = "public.all_accounts_realtime"
 
 # Disable server-side prepares for Supabase pooler
-pool = ConnectionPool(SUPABASE_DB_URL, min_size=1, max_size=4, timeout=10, kwargs={"prepare_threshold": 0})
+pool = ConnectionPool(
+    SUPABASE_DB_URL,
+    min_size=1,
+    max_size=4,
+    timeout=10,
+    kwargs={
+        "autocommit": True,
+        "row_factory": dict_row,
+        "prepare_threshold": 0,
+        "simple_query_protocol": True,   # << KEY FIX
+    }
+)
 
 DDL_STATEMENTS = [
     """
