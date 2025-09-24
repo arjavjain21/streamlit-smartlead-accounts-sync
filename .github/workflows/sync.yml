@@ -1,0 +1,28 @@
+name: Smartlead Sync
+on:
+  schedule:
+    - cron: "0 */8 * * *"   # 00:00, 08:00, 16:00 UTC
+  workflow_dispatch: {}       # manual Run workflow button
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: smartlead-sync
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - name: Run sync
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SMARTLEAD_BEARER: ${{ secrets.SMARTLEAD_BEARER }}
+          SMARTLEAD_ENDPOINT: ${{ secrets.SMARTLEAD_ENDPOINT }}
+          SMARTLEAD_LIMIT: ${{ secrets.SMARTLEAD_LIMIT }}
+          SMARTLEAD_TIMEOUT: ${{ secrets.SMARTLEAD_TIMEOUT }}
+        run: python scripts/sync.py
