@@ -1,6 +1,8 @@
 
 import os, sys, httpx
 from psycopg_pool import ConnectionPool
+from psycopg.rows import dict_row
+
 
 ENDPOINT = os.environ.get(
     "SMARTLEAD_ENDPOINT",
