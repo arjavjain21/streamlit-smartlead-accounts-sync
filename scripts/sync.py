@@ -12,49 +12,52 @@ BEARER = os.environ["SMARTLEAD_BEARER"]
 TIMEOUT = int(os.environ.get("SMARTLEAD_TIMEOUT", "60"))
 TABLE_NAME = "public.all_accounts_realtime"
 
-# pool = ConnectionPool(SUPABASE_DB_URL, min_size=1, max_size=4, timeout=10)
+# Disable server-side prepares for Supabase pooler
 pool = ConnectionPool(SUPABASE_DB_URL, min_size=1, max_size=4, timeout=10, kwargs={"prepare_threshold": 0})
 
-INIT_SQL = """
-create table if not exists public.sync_runs (
-  id bigserial primary key,
-  started_at timestamptz default now(),
-  finished_at timestamptz,
-  ok boolean,
-  message text,
-  rows_upserted integer
-);
-
-create table if not exists public.all_accounts_realtime (
-  id bigint not null,
-  time_to_wait_in_mins text null,
-  from_name text null,
-  from_email text null,
-  __typename text null,
-  type text null,
-  smtp_host text null,
-  is_smtp_success boolean null,
-  is_imap_success boolean null,
-  message_per_day bigint null,
-  daily_sent_count text null,
-  smart_sender_flag text null,
-  client_id text null,
-  client text null,
-  "isSPFVerified" text null,
-  "isDKIMVerified" text null,
-  "isDMARCVerified" text null,
-  "lastVerifiedTime" text null,
-  warmup_status text null,
-  warmup_reputation text null,
-  is_warmup_blocked text null,
-  tag_id text null,
-  tag_name text null,
-  tag_color text null,
-  email_account_tag_mappings_count text null,
-  email_campaign_account_mappings_count text null,
-  constraint all_accounts_realtime_pkey primary key (id)
-);
-"""
+DDL_STATEMENTS = [
+    """
+    create table if not exists public.sync_runs (
+      id bigserial primary key,
+      started_at timestamptz default now(),
+      finished_at timestamptz,
+      ok boolean,
+      message text,
+      rows_upserted integer
+    )
+    """,
+    """
+    create table if not exists public.all_accounts_realtime (
+      id bigint not null,
+      time_to_wait_in_mins text null,
+      from_name text null,
+      from_email text null,
+      __typename text null,
+      type text null,
+      smtp_host text null,
+      is_smtp_success boolean null,
+      is_imap_success boolean null,
+      message_per_day bigint null,
+      daily_sent_count text null,
+      smart_sender_flag text null,
+      client_id text null,
+      client text null,
+      "isSPFVerified" text null,
+      "isDKIMVerified" text null,
+      "isDMARCVerified" text null,
+      "lastVerifiedTime" text null,
+      warmup_status text null,
+      warmup_reputation text null,
+      is_warmup_blocked text null,
+      tag_id text null,
+      tag_name text null,
+      tag_color text null,
+      email_account_tag_mappings_count text null,
+      email_campaign_account_mappings_count text null,
+      constraint all_accounts_realtime_pkey primary key (id)
+    )
+    """
+]
 
 UPSERT_SQL = f"""
 insert into {TABLE_NAME} (
@@ -126,7 +129,8 @@ def flatten_tags(mappings: list):
 
 def init_db():
     with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
-        cur.execute(INIT_SQL)
+        for stmt in DDL_STATEMENTS:
+            cur.execute(stmt)
 
 def log_start():
     with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
@@ -158,7 +162,6 @@ def fetch_all_accounts(bearer, endpoint, limit):
                 tags = a.get("email_account_tag_mappings") or []
                 tag_id, tag_name, tag_color = flatten_tags(tags)
                 agg = (a.get("email_campaign_account_mappings_aggregate") or {}).get("aggregate", {})
-
                 row = {
                     "id": a.get("id"),
                     "time_to_wait_in_mins": to_text(a.get("time_to_wait_in_mins")),
@@ -188,7 +191,6 @@ def fetch_all_accounts(bearer, endpoint, limit):
                     "email_campaign_account_mappings_count": to_text(agg.get("count")),
                 }
                 all_rows.append(row)
-
             if len(accounts) < limit:
                 break
             offset += limit

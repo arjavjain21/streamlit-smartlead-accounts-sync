@@ -6,7 +6,7 @@ import httpx
 import pandas as pd
 import streamlit as st
 from psycopg_pool import ConnectionPool
-# -------------------- Config --------------------
+
 DEFAULT_ENDPOINT = os.environ.get(
     "SMARTLEAD_ENDPOINT",
     "https://server.smartlead.ai/api/email-account/get-total-email-accounts"
@@ -14,79 +14,81 @@ DEFAULT_ENDPOINT = os.environ.get(
 DEFAULT_LIMIT = int(os.environ.get("SMARTLEAD_LIMIT", "10000"))
 REQUEST_TIMEOUT = int(os.environ.get("SMARTLEAD_TIMEOUT", "60"))
 SUPABASE_DB_URL = os.environ.get("SUPABASE_DB_URL", "").strip()
-
 TABLE_NAME = "public.all_accounts_realtime"
 
 if not SUPABASE_DB_URL:
     st.error("SUPABASE_DB_URL is not set. Set it in Streamlit Secrets or environment.")
     st.stop()
 
-# -------------------- Pool --------------------
 @st.cache_resource
-# def get_pool():
-#     return ConnectionPool(
-#         conninfo=SUPABASE_DB_URL,
-#         min_size=1,
-#         max_size=4,
-#         timeout=10
-#     )
+def get_pool():
+    # Disable server-side prepares due to Supabase transaction pooler
+    return ConnectionPool(
+        conninfo=SUPABASE_DB_URL,
+        min_size=1,
+        max_size=4,
+        timeout=10,
+        kwargs={"prepare_threshold": 0}
+    )
 
-# pool = get_pool()
+pool = get_pool()
 
-pool = ConnectionPool(SUPABASE_DB_URL, min_size=1, max_size=4, timeout=10, kwargs={"prepare_threshold": 0})
-
-# -------------------- DB Init --------------------
-INIT_SQL = """
-create table if not exists public.app_settings (
-  key text primary key,
-  value text,
-  updated_at timestamptz default now()
-);
-
-create table if not exists public.sync_runs (
-  id bigserial primary key,
-  started_at timestamptz default now(),
-  finished_at timestamptz,
-  ok boolean,
-  message text,
-  rows_upserted integer
-);
-
-create table if not exists public.all_accounts_realtime (
-  id bigint not null,
-  time_to_wait_in_mins text null,
-  from_name text null,
-  from_email text null,
-  __typename text null,
-  type text null,
-  smtp_host text null,
-  is_smtp_success boolean null,
-  is_imap_success boolean null,
-  message_per_day bigint null,
-  daily_sent_count text null,
-  smart_sender_flag text null,
-  client_id text null,
-  client text null,
-  "isSPFVerified" text null,
-  "isDKIMVerified" text null,
-  "isDMARCVerified" text null,
-  "lastVerifiedTime" text null,
-  warmup_status text null,
-  warmup_reputation text null,
-  is_warmup_blocked text null,
-  tag_id text null,
-  tag_name text null,
-  tag_color text null,
-  email_account_tag_mappings_count text null,
-  email_campaign_account_mappings_count text null,
-  constraint all_accounts_realtime_pkey primary key (id)
-);
-"""
+# --- DDL statements executed separately ---
+DDL_STATEMENTS = [
+    """
+    create table if not exists public.app_settings (
+      key text primary key,
+      value text,
+      updated_at timestamptz default now()
+    )
+    """,
+    """
+    create table if not exists public.sync_runs (
+      id bigserial primary key,
+      started_at timestamptz default now(),
+      finished_at timestamptz,
+      ok boolean,
+      message text,
+      rows_upserted integer
+    )
+    """,
+    """
+    create table if not exists public.all_accounts_realtime (
+      id bigint not null,
+      time_to_wait_in_mins text null,
+      from_name text null,
+      from_email text null,
+      __typename text null,
+      type text null,
+      smtp_host text null,
+      is_smtp_success boolean null,
+      is_imap_success boolean null,
+      message_per_day bigint null,
+      daily_sent_count text null,
+      smart_sender_flag text null,
+      client_id text null,
+      client text null,
+      "isSPFVerified" text null,
+      "isDKIMVerified" text null,
+      "isDMARCVerified" text null,
+      "lastVerifiedTime" text null,
+      warmup_status text null,
+      warmup_reputation text null,
+      is_warmup_blocked text null,
+      tag_id text null,
+      tag_name text null,
+      tag_color text null,
+      email_account_tag_mappings_count text null,
+      email_campaign_account_mappings_count text null,
+      constraint all_accounts_realtime_pkey primary key (id)
+    )
+    """
+]
 
 with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
-    cur.execute(INIT_SQL)
+    for stmt in DDL_STATEMENTS:
+        cur.execute(stmt)
 
-# -------------------- Bearer helpers --------------------
 def db_get_bearer() -> str | None:
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute("select value from public.app_settings where key = 'smartlead_bearer'")
@@ -114,7 +116,6 @@ def resolve_bearer() -> str | None:
         return env_token.strip()
     return st.session_state.get("bearer")
 
-# -------------------- Mapping helpers --------------------
 def to_text(v):
     if v is None:
         return None
@@ -131,7 +132,6 @@ def extract_dns_bits(dns: dict):
     )
 
 def flatten_tags(mappings: list):
-    # join multiples with commas to fit text columns
     tag_ids, tag_names, tag_colors = [], [], []
     for m in mappings or []:
         t = m.get("tag") or {}
@@ -140,7 +140,6 @@ def flatten_tags(mappings: list):
         if "color" in t: tag_colors.append(t.get("color"))
     return ",".join(tag_ids) or None, ",".join(tag_names) or None, ",".join(tag_colors) or None
 
-# -------------------- Upsert --------------------
 UPSERT_SQL = f"""
 insert into {TABLE_NAME} (
   id, time_to_wait_in_mins, from_name, from_email, __typename, type, smtp_host,
@@ -194,28 +193,23 @@ def upsert_accounts(rows: list[dict]) -> int:
         cur.executemany(UPSERT_SQL, rows)
     return len(rows)
 
-# -------------------- Fetch --------------------
 def fetch_all_accounts(bearer: str, endpoint: str, limit: int) -> list[dict]:
     headers = {"Accept": "application/json", "Authorization": f"Bearer {bearer.strip()}"}
     all_rows, offset = [], 0
-
     with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
         while True:
-            params = {"offset": offset, "limit": limit}
-            r = client.get(endpoint, headers=headers, params=params)
+            r = client.get(endpoint, headers=headers, params={"offset": offset, "limit": limit})
             if r.status_code == 401:
                 raise RuntimeError("401 Unauthorized. Update your Bearer token.")
             r.raise_for_status()
             payload = r.json()
-            data = payload.get("data") or {}
-            accounts = data.get("email_accounts") or []
+            accounts = (payload.get("data") or {}).get("email_accounts") or []
             for a in accounts:
                 dns = a.get("dns_validation_status") or {}
                 isSPF, isDKIM, isDMARC, lastV = extract_dns_bits(dns)
                 tags = a.get("email_account_tag_mappings") or []
                 tag_id, tag_name, tag_color = flatten_tags(tags)
                 agg = (a.get("email_campaign_account_mappings_aggregate") or {}).get("aggregate", {})
-
                 row = {
                     "id": a.get("id"),
                     "time_to_wait_in_mins": to_text(a.get("time_to_wait_in_mins")),
@@ -245,19 +239,15 @@ def fetch_all_accounts(bearer: str, endpoint: str, limit: int) -> list[dict]:
                     "email_campaign_account_mappings_count": to_text(agg.get("count")),
                 }
                 all_rows.append(row)
-
             if len(accounts) < limit:
                 break
             offset += limit
-
     return all_rows
 
 def run_sync(bearer: str, endpoint: str = DEFAULT_ENDPOINT, limit: int = DEFAULT_LIMIT) -> tuple[int, str]:
-    # log start
     with pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
         cur.execute("insert into public.sync_runs (ok, message) values (null, 'started') returning id")
         sync_id = cur.fetchone()[0]
-
     try:
         rows = fetch_all_accounts(bearer, endpoint, limit)
         n = upsert_accounts(rows)
@@ -277,11 +267,8 @@ def run_sync(bearer: str, endpoint: str = DEFAULT_ENDPOINT, limit: int = DEFAULT
             """, (str(e), sync_id))
         raise
 
-# -------------------- UI --------------------
 st.set_page_config(page_title="Smartlead Accounts Sync", layout="wide")
-
 st.title("Smartlead Accounts Sync → all_accounts_realtime")
-st.caption("Control panel. Replace Bearer, run manual sync, inspect rows. Scheduler must run outside Streamlit.")
 
 with st.sidebar:
     st.subheader("Connection")
@@ -302,14 +289,14 @@ with st.sidebar:
                 db_set_bearer(new_token.strip())
                 st.session_state["bearer"] = new_token.strip()
                 st.success("Bearer replaced")
-                time.sleep(0.4)
+                time.sleep(0.3)
                 st.rerun()
     with c2:
         if st.button("Clear Bearer"):
             db_clear_bearer()
             st.session_state.pop("bearer", None)
             st.success("Bearer cleared")
-            time.sleep(0.4)
+            time.sleep(0.3)
             st.rerun()
 
     st.divider()
@@ -321,10 +308,9 @@ with st.sidebar:
     st.subheader("Run sync")
     run_now = st.button("Sync now")
 
-tabs = st.tabs(["Status", "Preview", "Logs", "Automation guide"])
+tabs = st.tabs(["Status", "Preview", "Logs", "Automation"])
 
 with tabs[0]:
-    st.subheader("Current status")
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(f"select count(*) from {TABLE_NAME}")
         total = cur.fetchone()[0]
@@ -348,46 +334,24 @@ with tabs[0]:
             st.success(f"Done. Upserted {n} accounts.")
 
 with tabs[1]:
-    st.subheader("Preview latest 200")
-    cols = [
-        "id","from_email","from_name","type","is_smtp_success","is_imap_success",
-        "message_per_day","daily_sent_count","smart_sender_flag","warmup_status",
-        "warmup_reputation","is_warmup_blocked","tag_name","email_campaign_account_mappings_count"
-    ]
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(f"""
-            select {", ".join(cols)}
+            select id, from_email, from_name, type, is_smtp_success, is_imap_success,
+                   message_per_day, daily_sent_count, smart_sender_flag, warmup_status,
+                   warmup_reputation, is_warmup_blocked, tag_name, email_campaign_account_mappings_count
             from {TABLE_NAME}
-            order by id desc
-            limit 200
-        """)
-        rows = cur.fetchall()
-        names = [d.name for d in cur.description]
-    df = pd.DataFrame(rows, columns=names)
-    st.dataframe(df, use_container_width=True)
-
-with tabs[2]:
-    st.subheader("Recent sync runs")
-    with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("""
-            select id, started_at, finished_at, ok, rows_upserted, message
-            from public.sync_runs
-            order by id desc
-            limit 50
+            order by id desc limit 200
         """)
         rows = cur.fetchall()
         cols = [d.name for d in cur.description]
-    df = pd.DataFrame(rows, columns=cols)
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(pd.DataFrame(rows, columns=cols), use_container_width=True)
+
+with tabs[2]:
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("select id, started_at, finished_at, ok, rows_upserted, message from public.sync_runs order by id desc limit 50")
+        rows = cur.fetchall()
+        cols = [d.name for d in cur.description]
+    st.dataframe(pd.DataFrame(rows, columns=cols), use_container_width=True)
 
 with tabs[3]:
-    st.subheader("Free scheduling options")
-    st.markdown("""
-Use one of these to run every 8 hours. Streamlit is the UI. The schedule runs elsewhere.
-
-**Option 1: GitHub Actions**: included workflow runs `scripts/sync.py` on cron `0 */8 * * *`.
-
-**Option 2: Supabase Cron**: call a thin function that runs the same logic as `scripts/sync.py`.
-
-Keep the Bearer in GitHub repository secrets or Supabase Vault.
-""")
+    st.markdown("Use GitHub Actions or Supabase Cron. Cron `0 */8 * * *`.")
