@@ -6,8 +6,6 @@ import httpx
 import pandas as pd
 import streamlit as st
 from psycopg_pool import ConnectionPool
-# from psycopg_pool import ConnectionPool
-pool = ConnectionPool(SUPABASE_DB_URL, min_size=1, max_size=4, timeout=10, kwargs={"prepare_threshold": 0})
 # -------------------- Config --------------------
 DEFAULT_ENDPOINT = os.environ.get(
     "SMARTLEAD_ENDPOINT",
@@ -25,15 +23,17 @@ if not SUPABASE_DB_URL:
 
 # -------------------- Pool --------------------
 @st.cache_resource
-def get_pool():
-    return ConnectionPool(
-        conninfo=SUPABASE_DB_URL,
-        min_size=1,
-        max_size=4,
-        timeout=10
-    )
+# def get_pool():
+#     return ConnectionPool(
+#         conninfo=SUPABASE_DB_URL,
+#         min_size=1,
+#         max_size=4,
+#         timeout=10
+#     )
 
-pool = get_pool()
+# pool = get_pool()
+
+pool = ConnectionPool(SUPABASE_DB_URL, min_size=1, max_size=4, timeout=10, kwargs={"prepare_threshold": 0})
 
 # -------------------- DB Init --------------------
 INIT_SQL = """
